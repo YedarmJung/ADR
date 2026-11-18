@@ -1,0 +1,17 @@
+# Python bytecode and cache directories
+__pycache__/
+*.py[cod]
+
+# Local research material and generated artifacts
+/references/
+/results/
+/old/
+/tests/
+/tmp/
+
+
+# Virtual environment, OS/editor files, large instance data
+.venv/
+.DS_Store
+.claude/
+/adr_scaling_n10-50/

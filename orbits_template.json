@@ -1,0 +1,139 @@
+{
+  "epoch": null,
+  "data_kind": "user_mean_elements",
+  "notes": "Set a shared epoch and replace every null. a_m must be semimajor axis, not radius at one instant. Angles in degrees, M is mean anomaly. Screenshot altitude/drift are rounded reference labels only.",
+  "objects": [
+    {
+      "object_id": "depot",
+      "name": "Depot",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 713.0,
+      "screenshot_raan_rate_deg_day": -1.894
+    },
+    {
+      "object_id": "38068",
+      "name": "COSMOS 2251 DEB (38068)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 771.0,
+      "screenshot_raan_rate_deg_day": -1.84
+    },
+    {
+      "object_id": "35446",
+      "name": "COSMOS 2251 DEB (35446)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 710.0,
+      "screenshot_raan_rate_deg_day": -1.893
+    },
+    {
+      "object_id": "34129",
+      "name": "COSMOS 2251 DEB (34129)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 631.0,
+      "screenshot_raan_rate_deg_day": -1.971
+    },
+    {
+      "object_id": "34752",
+      "name": "COSMOS 2251 DEB (34752)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 548.0,
+      "screenshot_raan_rate_deg_day": -2.057
+    },
+    {
+      "object_id": "35022",
+      "name": "COSMOS 2251 DEB (35022)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 688.0,
+      "screenshot_raan_rate_deg_day": -1.917
+    },
+    {
+      "object_id": "34590",
+      "name": "COSMOS 2251 DEB (34590)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 709.0,
+      "screenshot_raan_rate_deg_day": -1.894
+    },
+    {
+      "object_id": "34672",
+      "name": "COSMOS 2251 DEB (34672)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 769.0,
+      "screenshot_raan_rate_deg_day": -1.84
+    },
+    {
+      "object_id": "33762",
+      "name": "COSMOS 2251 DEB (33762)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 779.0,
+      "screenshot_raan_rate_deg_day": -1.83
+    },
+    {
+      "object_id": "34045",
+      "name": "COSMOS 2251 DEB (34045)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 778.0,
+      "screenshot_raan_rate_deg_day": -1.832
+    },
+    {
+      "object_id": "33905",
+      "name": "COSMOS 2251 DEB (33905)",
+      "a_m": null,
+      "e": null,
+      "i_deg": null,
+      "raan_deg": null,
+      "argp_deg": null,
+      "mean_anomaly_deg": null,
+      "screenshot_altitude_km": 771.0,
+      "screenshot_raan_rate_deg_day": -1.855
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+numpy>=1.26
+gurobipy>=13,<14
