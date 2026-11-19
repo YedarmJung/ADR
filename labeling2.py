@@ -24,6 +24,7 @@ kit는 Σ p·(exp(D_k/c) − 1)이다. 키트 자체의 질량을 뺀 운반 추
 
 from __future__ import annotations
 
+import bisect
 import heapq
 import itertools
 import math
@@ -55,10 +56,51 @@ def dominates(a: Label, b: Label, fast: bool) -> bool:
         return False
     return len(a.S) <= len(b.S) if fast else a.S <= b.S
 
+def cal_min_out_deltav(table: ArcTable):
+    """R(i, t) = 시각 t 이후에 노드 i를 떠나 디포로 돌아가는 데 드는 최소 ΔV [m/s]. 못 돌아가면 inf.
+
+    재방문 금지, 최대 방문 수, 탱크는 무시하고 계산한다 → 실제 남은 ΔV의 올바른 하한.
+    dual과 무관하므로 CG 전에 한 번만 계산하면 된다.
+
+    방법: 아크를 출발 시각이 늦은 것부터 훑는다.
+      아크 i → j (출발 t_dep, 도착 t_arr)를 타면 드는 최소 ΔV
+          = dv + (j가 디포면 0, 아니면 R(j, t_arr + τ))
+      t_arr + τ는 t_dep보다 늦으므로, R(j, t_arr + τ)는 이미 앞에서 다 계산되어 있다.
+    """
+    t_dep, t_arr, dv = table.t_dep.tolist(), table.t_arr.tolist(), table.dv.tolist()
+    frm, to = table.i.tolist(), table.j.tolist()
+
+    # 노드 i마다 두 목록을 같은 순서로 쌓는다 (출발 시각이 늦은 아크부터)
+    #   neg_t[i]: −(출발 시각)      → 오름차순이 되도록 부호를 바꿔 저장 (bisect용)
+    #   cost[i]:  그 시각 이후 출발해서 디포로 가는 최소 ΔV (지금까지 본 것 중 최소)
+    neg_t = defaultdict(list)
+    cost = defaultdict(list)
+
+    def R(i: int, t: float) -> float:
+        k = bisect.bisect_right(neg_t[i], -t)     # 출발 시각 ≥ t인 아크 개수
+        return cost[i][k - 1] if k else math.inf
+
+    for a in sorted(range(len(dv)), key=lambda x: t_dep[x], reverse=True):
+        i, j = frm[a], to[a]
+        if i == 0:
+            continue                                   # 디포에서 나가는 아크는 필요 없다
+        if j == 0:
+            if t_arr[a] + d.S0 > d.HORIZON_S:
+                continue                               # 기간 안에 못 돌아오는 복귀 아크
+            c = dv[a]
+        else:
+            c = dv[a] + R(j, t_arr[a] + d.TAU_S)        # j에서 작업을 마친 뒤 디포까지
+        if cost[i]:
+            c = min(c, cost[i][-1])                    # 더 늦게 떠나는 길이 더 싸면 그 값
+        neg_t[i].append(-t_dep[a])
+        cost[i].append(c)
+
+    return R
+
 
 def price2(risk: dict[int, float], alpha: dict[int, float], U: TimePrice, table: ArcTable,
            use_skip: bool = True, n_best: int | None = N_BEST, min_rp: float = TOL, k_max: int | None = None,
-           dv_weight: float = 0.0) -> PricingResult:
+           dv_weight: float = 0.0, R=None) -> PricingResult:
     """pricing 한 번. 자원 설정은 data.py에서 읽는다.
 
     rp = Σ_{i∈S} (r_i − α_i) − 사용료 − dv_weight·ΣΔV > min_rp인 후보를 최대 n_best개 반환한다.
@@ -75,6 +117,7 @@ def price2(risk: dict[int, float], alpha: dict[int, float], U: TimePrice, table:
     min_rp: 반환 대상으로 인정할 rp의 하한
     k_max: 최대 방문 개수
     dv_weight: 델타 v 목적함수 가중치
+    R: cal_min_out_deltav(table)의 결과 R(i, t). 없으면 여기서 계산한다 (약 0.3초)
 
     """
     k_max = d.K_MAX if k_max is None else k_max
@@ -93,60 +136,72 @@ def price2(risk: dict[int, float], alpha: dict[int, float], U: TimePrice, table:
     ids = arcs_among(table, nodes | {0})
     ids = [a for a in ids[np.argsort(table.t_dep[ids], kind="stable")].tolist()
            if to[a] != 0 or t_arr[a] + d.S0 <= d.HORIZON_S]
-    min_out = defaultdict(lambda: math.inf)   # 노드에서 나가는 아크의 최소 ΔV (앞으로 쓸 ΔV의 하한)
-    for a in ids:
-        min_out[frm[a]] = min(min_out[frm[a]], dv[a])
-    positive = sorted(((v[i], i) for i in nodes if v[i] > 0), reverse=True)   # 양수 v (큰 순)
-    extra_of: dict[frozenset[int], float] = {}   # S → S 밖에서 더 모을 수 있는 v의 상한 (같은 S는 한 번만 계산)
 
-    best: dict[frozenset[int], tuple[float, int, Label]] = {}   # S → (rp, 마지막 아크, 그 앞 라벨)
+    # 디포까지 돌아가는 최소 ΔV R(i, t) (앞으로 쓸 ΔV의 하한). dual과 무관해서 보통 cg.py가 한 번 계산해 넘겨준다
+    if R is None:
+        R = cal_min_out_deltav(table)
+
+    positive = sorted(((v[i], i) for i in nodes if v[i] > 0), reverse=True)   # 양수 v (큰 순)
+
+    extra_of: dict[frozenset[int], float] = {}   # S → S 밖에서 더 모을 수 있는 v의 상한 (같은 S는 한 번만 계산)
+    best: dict[frozenset[int], tuple[float, int, Label]] = {}   # S → (rp, 마지막 아크, 그 앞 라벨) 완성된 트립 후보
     b = min_rp                                                  # 기준값 (트립을 모으면서 올라간다)
-    waiting: dict[int, list[Label]] = defaultdict(list)         # 잔해 → 대기 목록 (떠날 수 있게 된, 서로 지배하지 않는 라벨)
-    arriving: list = []                                         # 힙: (떠날 수 있게 되는 시각, 번호, 잔해, 라벨)
+    waiting: dict[int, list[Label]] = defaultdict(list)         # 잔해 → 대기 목록 (떠날 수 있게 된, 서로 지배하지 않는 라벨) 노드별로 작업을 마치고 떠날 수 있는 라벨 목록
+    arriving: list = []                                         # 힙: (떠날 수 있게 되는 시각, 번호, 잔해, 라벨) 
     order = itertools.count()                                   # 힙에서 시각이 같을 때 쓰는 번호
 
+
     def arrive(k: int, t: float, g: float, total_dv: float, kit: float, S: frozenset[int], a: int, prev):
-        """잔해 k에 도착한 새 라벨. 탱크로 가망이 없거나 rp 상한이 b 이하면 버리고,
-        아니면 떠날 수 있게 되는 시각 t에 k의 대기 목록에 들어가도록 힙에 넣는다."""
-        lb = total_dv + min_out[k]   # 디포까지 돌아가려면 적어도 이만큼 ΔV를 쓴다
+        """
+        아크가 하나 들어오면 그 아크의 시작점의 라벨들에 그 아크를 붙어봄.
+        탱크 용량이 가망이 없거나 reduced cost의 상한이 b 이하면 버림.
+        아니면 떠날 수 있게 되는 시각 t(도착 시간에 작업 시간 더한 값)에 k의 대기목록에 들어가도록 힙(arriving)에 넣는다.
+        """
+        rest = R(k, t)               # t 이후 k를 떠나 디포까지 돌아가는 최소 ΔV (못 돌아가면 inf)
+        lb = total_dv + rest         # 디포까지 돌아가려면 적어도 이만큼 ΔV를 쓴다
         if d.M_DRY * math.expm1(lb / d.C_EXH) + kit > d.TANK_MAX:
-            return
+            return                   # rest가 inf면 여기서 버려진다
         if S not in extra_of:
             extra_of[S] = sum(itertools.islice((x for x, i in positive if i not in S), k_max - len(S)))
-        # rp 상한: 더 모을 v는 extra 이하, 사용료 U(ē) − U(s̄) ≥ U(t) − U(s̄) (ē > t), 남은 ΔV ≥ min_out
-        ub = g + extra_of[S] - U(t) - w * min_out[k]
+        # rp 상한: 더 모을 v는 extra 이하, 사용료 U(ē) − U(s̄) ≥ U(t) − U(s̄) (ē > t), 남은 ΔV ≥ rest
+        # 지금 가장 가치가 큰 잔해 순서로, 더 들릴 수 있는 만큼의 수를 더함. = 가치 상한
+        ub = g + extra_of[S] - U(t) - w * rest
         if ub > b:
-            heapq.heappush(arriving, (t, next(order), k, Label(t, g, total_dv, kit, S, ub, a, prev)))
+            heapq.heappush(arriving, (t, next(order), k, Label(t, g, total_dv, kit, S, ub, a, prev))) #힙에 넣기
 
     # 2. 아크를 출발 시각 순으로 훑는다
     for a in ids:
-        # (가) 이 아크가 떠나기 전에 떠날 수 있게 된 라벨을 대기 목록에 넣는다
+        # 이 아크가 떠나기 전에 떠날 수 있게 된 라벨을 대기 목록waiting에 넣는다
+        # 힙의 가장 이른 준비 시각이 현재 아크 출발시각 이하면 그 라벨 사용 가능
         while arriving and arriving[0][0] <= t_dep[a]:
-            _, _, j, lab = heapq.heappop(arriving)
+            _, _, j, lab = heapq.heappop(arriving) #현재 노드 및 라벨
             if lab.ub <= b or any(dominates(f, lab, fast) for f in waiting[j]):
                 continue     # 그사이 기준값이 올라 가망이 없어졌거나, 더 나은 라벨이 이미 있다
-            waiting[j] = [f for f in waiting[j] if not dominates(lab, f, fast)] + [lab]
+            waiting[j] = [f for f in waiting[j] if not dominates(lab, f, fast)] + [lab] # 아니면 지금 라벨 추가 및 기존 라벨 제거
 
         i, k = frm[a], to[a]
         if i == 0:
-            # (나) 디포에서 출발: 새 트립의 첫 라벨
+            # 디포에서 출발하는 아크
+            # 기존 라벨을 None으로 arrive 함수에 넣기. 
             kit = d.KIT_MASS * math.expm1(dv[a] / d.C_EXH)
             arrive(k, t_arr[a] + d.TAU_S, v[k] + U(floor_unit(t_dep[a])) - w * dv[a], dv[a], kit,
                    frozenset([k]), a, None)
         elif k == 0:
-            # (다) 디포로 복귀: 대기 목록의 라벨마다 트립을 완성해 rp를 계산한다
+            # 디포로 복귀하는 아크
+            # i 노드의 모든 가능한 라벨을 가져다가 (시간은 에초에 이 아크의 출발 시간보다 그 라벨 출발 가능 시간이 더 이른 녀석들만 waiting 에 들어가 있다)
             end = U(ceil_unit(t_arr[a] + d.S0))
             for lab in waiting[i]:
                 total = lab.dv + dv[a]
                 if d.M_DRY * math.expm1(total / d.C_EXH) + lab.kit > d.TANK_MAX:
                     continue
-                rp = lab.g - end - w * dv[a]
+                rp = lab.g - end - w * dv[a] #reduced cost 최종 계산
                 if rp > b and (lab.S not in best or rp > best[lab.S][0]):
                     best[lab.S] = (rp, a, lab)
                     if n_best is not None and len(best) >= n_best:
                         b = max(b, heapq.nlargest(n_best, (x[0] for x in best.values()))[-1])
         else:
-            # (라) 잔해 i → 잔해 k: 대기 목록의 라벨마다 이 아크를 붙인다
+            # 잔해 i → 잔해 k: 대기 목록의 라벨마다 이 아크를 붙인다
+            # 잔해 i에서 기다리고 있는 라벨이 다 목표 waiting 변수 사용
             for lab in waiting[i]:
                 if k in lab.S or len(lab.S) >= k_max:
                     continue
@@ -157,8 +212,8 @@ def price2(risk: dict[int, float], alpha: dict[int, float], U: TimePrice, table:
     # 3. rp가 큰 n_best개를 트립으로 복원한다 (마지막 라벨에서 prev를 거꾸로 따라가며 아크를 모은다)
     chosen = sorted(best.items(), key=lambda x: x[1][0], reverse=True)[:n_best]
     trips, rps = [], []
-    for S, (rp, a, lab) in chosen:
-        arc_ids = [a]
+    for S, (rp, a, lab) in chosen: # 방문 집합, 점수, 복귀 아크, 마지막 라벨
+        arc_ids = [a] #마지막 복귀 아크
         while lab is not None:
             arc_ids.append(lab.arc)
             lab = lab.prev

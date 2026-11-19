@@ -29,11 +29,13 @@
   기존 .npz 입력도 지원한다. 위험지수는 고정 시드로 1~5를 생성하고 data.py의 제원을 쓴다.
 
 프로젝트 폴더에서 실행 (PowerShell)
-  .\.venv\Scripts\python.exe -X utf8 run.py adr_scaling_n10-50/data/n10 results/cg_n10_new.json
+  .\.venv\Scripts\python.exe -X utf8 run.py adr_scaling_n10-50/data/n10
 
 기본 동작은 1단계 위험지수 최대화 후 2단계 총 ΔV 최소화다.
-  1단계 결과: 지정한 JSON 파일
-  2단계 결과: 같은 이름에 _dv를 붙인 JSON 파일
+결과는 results/<시나리오>_<날짜_시각>/ 폴더에 저장된다 (예: results/n10_20261118_1305/).
+  result.json     1단계 결과
+  result_dv.json  2단계 결과
+  run.log         화면 출력 전체
 
 주요 선택사항
   --phase1-only      1단계만 실행

@@ -1,19 +1,3 @@
-"""마스터 문제: 모은 트립(열) 중 어떤 것들을 쓸지 고른다. (plan 3.3)
-
-    최대화   Σ_c p_c · x_c                         p_c = 트립 c가 들르는 잔해들의 위험지수 합
-    제약     Σ_{c가 잔해 i를 들름} x_c ≤ 1          잔해 행: 잔해 i마다 하나 (가격 α_i)
-             Σ_{s̄_c ≤ t < ē_c} x_c ≤ 1              시간 행: 출발 시각 t마다 하나 (가격 μ_t)
-             x_c ≥ 0       (최종 MIP에서는 x_c ∈ {0, 1})
-    x_c ≤ 1은 따로 두지 않는다. 잔해 행 때문에 저절로 지켜지고, 따로 두면 그 상한이 가격 일부를
-    가져가서 pricing의 rp 계산(α, μ만 씀)과 LP가 어긋난다.
-
-2단계 (fix_risk 이후, 선행연구의 2순위 목적):
-    최소화   Σ_c ΔV_c · x_c        (Gurobi 모델은 최대화라서 목적 계수를 −ΔV_c로 둔다)
-    제약     위의 잔해 행, 시간 행 + 위험지수 행 Σ_c p_c · x_c ≥ R*   (가격 −λ, λ ≥ 0)
-
-CG 동안 Gurobi 모델을 새로 만들지 않고, 열(변수)과 시간 행을 계속 더해 간다.
-"""
-
 from __future__ import annotations
 
 import bisect
@@ -28,8 +12,8 @@ from data import TimePrice, Trip
 _ENV: gp.Env | None = None
 
 
+#기본 그로비 환경
 def gurobi_env() -> gp.Env:
-    """마스터 LP/MIP가 공유하는 출력 없는 Gurobi 환경."""
     global _ENV
     if _ENV is None:
         env = gp.Env(empty=True)
@@ -45,32 +29,26 @@ def gurobi_env() -> gp.Env:
 
 @dataclass
 class MasterModel:
-    """CG 내내 유지되는 마스터 모델."""
     model: gp.Model                                               # Gurobi 모델
     risk: dict[int, float]                                        # 잔해 i → 위험지수 r_i
     columns: list[Trip] = field(default_factory=list)             # 들어온 트립들 (k번째 트립 = k번째 변수)
     x_vars: list[gp.Var] = field(default_factory=list)            # 트립마다 변수 x_c (columns와 같은 순서)
     debris_rows: dict[int, gp.Constr] = field(default_factory=dict)  # 잔해 i → 잔해 행
     time_rows: dict[float, gp.Constr] = field(default_factory=dict)  # 출발 시각 t → 시간 행
-    risk_row: gp.Constr | None = None                             # 2단계에서만: 위험지수 합 ≥ R* 행 (1단계는 None)
+    risk_row: gp.Constr | None = None                             # 2단계에서만: 위험지수 합 ≥ R* 행
 
 
 @dataclass
 class MIPResult:
-    """최종 MIP를 푼 결과."""
-    selected: list[Trip]   # 고른 트립들 (출발 시각 순)
-    risk_sum: float        # R* = 고른 트립들의 위험지수 합 (1순위 목적값)
-    dv_sum: float          # 고른 트립들의 총 ΔV [m/s] (2순위 목적값, 선행연구와 같은 기준)
-    prop_sum: float        # 고른 트립들의 총 추진제 [kg] (참고용)
-    status: str            # "optimal", "time_limit" 등
+    selected: list[Trip]   # 고른 트립들
+    risk_sum: float        # R* = 고른 트립들의 위험지수 합
+    dv_sum: float          # 고른 트립들의 총 ΔV [m/s]
+    prop_sum: float        # 고른 트립들의 총 추진제 [kg]
+    status: str
 
 
 def new_master(risk: dict[int, float]) -> MasterModel:
-    """빈 마스터 모델을 만든다. 잔해 행은 지금 다 만들고(처음엔 비어 있음), 시간 행은 열이 들어올 때 만든다.
-
-    입력: 잔해 i → 위험지수 r_i
-    출력: MasterModel
-    """
+    #처음 빈 모델 생성
     model = gp.Model("master", env=gurobi_env())
     model.ModelSense = GRB.MAXIMIZE
     m = MasterModel(model=model, risk=risk)
@@ -80,16 +58,12 @@ def new_master(risk: dict[int, float]) -> MasterModel:
 
 
 def add_column(m: MasterModel, trip: Trip) -> bool:
-    """트립 하나를 열로 추가한다.
-
-    입력: 마스터, 트립
-    출력: 추가했으면 True, 똑같은 트립(같은 아크들)이 이미 있으면 False
-    """
+    #트립 하나 열로 추가
+    #이미 있으면 false 출력
     if any(c.arc_ids == trip.arc_ids for c in m.columns):
         return False
 
     # 1. 이 트립의 출발 시각 s̄에 시간 행이 없으면 만든다.
-    #    새 행에는 그 시각에 진행 중인(s̄_c ≤ t < ē_c) 기존 트립들이 들어간다.
     t = trip.s_bar
     if t not in m.time_rows:
         busy = [x for c, x in zip(m.columns, m.x_vars) if c.s_bar <= t < c.e_bar]
@@ -104,11 +78,10 @@ def add_column(m: MasterModel, trip: Trip) -> bool:
     profit = sum(m.risk[i] for i in trip.debris)
     coeffs = [1.0] * len(rows)
     obj = profit
-    if m.risk_row is not None:
+    if m.risk_row is not None: #2단계에선 risk row에도 추가
         rows.append(m.risk_row)
         coeffs.append(profit)
         obj = -trip.dv_total
-    # 상한(ub)은 두지 않는다 (파일 맨 위 설명 참고)
     x = m.model.addVar(lb=0.0, obj=obj, column=gp.Column(coeffs, rows))
     m.columns.append(trip)
     m.x_vars.append(x)
@@ -116,10 +89,8 @@ def add_column(m: MasterModel, trip: Trip) -> bool:
 
 
 def fix_risk(m: MasterModel, r_star: float) -> None:
-    """2단계로 바꾼다: 위험지수 합 ≥ r_star 행을 넣고, 목적을 총 ΔV 최소로 바꾼다 (지금 있는 열 그대로).
-
-    입력: 1단계를 마친 마스터, 1단계에서 찾은 최적 위험지수 합 R*
-    이후 solve_lp의 LP 값 = −(총 ΔV). 위험지수 행의 가격은 m.risk_row.Pi = −λ (λ ≥ 0)
+    """
+    2단계로 바꾼다: 위험지수 합 ≥ r_star 행을 넣고, 목적을 총 ΔV 최소로 바꾼다.
     """
     if m.risk_row is not None:
         raise ValueError("이미 2단계로 전환한 마스터입니다.")
@@ -132,12 +103,8 @@ def fix_risk(m: MasterModel, r_star: float) -> None:
 
 
 def solve_lp(m: MasterModel) -> tuple[float, dict[int, float], dict[float, float]]:
-    """마스터 LP를 푼다 (x는 0 이상 실수. 잔해 행 때문에 1을 넘지 않는다).
-
-    입력: 마스터
-    출력: (LP 값, α, μ)
-          α: 잔해 i → 잔해 행의 가격 (dual)
-          μ: 출발 시각 t → 시간 행의 가격 (dual)
+    """
+    마스터 LP 풀기
     """
     m.model.optimize()
     if m.model.Status != GRB.OPTIMAL:
@@ -169,15 +136,10 @@ def time_price(mu: dict[float, float]) -> TimePrice:
 
 
 def solve_mip(m: MasterModel, time_limit_s: float | None = None) -> MIPResult:
-    """최종 MIP: x를 0/1로 바꿔서 한 번 푼다. LP 모델은 그대로 두고 복사본을 푼다.
 
-    목적: 1단계는 위험지수 최대 후 ΔV 최소. 2단계는 위험지수 하한 아래 ΔV 최소.
-    입력: 마스터, 시간 제한 [s]
-    출력: MIPResult
-    """
-    m.model.update()                   # 아직 반영 안 된 열·행을 반영한 뒤 복사한다
+    m.model.update()
     mip = m.model.copy()
-    xs = mip.getVars()                 # 복사본의 변수 (columns와 같은 순서)
+    xs = mip.getVars()
     for x in xs:
         x.VType = GRB.BINARY
 

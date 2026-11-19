@@ -14,7 +14,7 @@ from pathlib import Path
 
 import data as d
 from data import ArcTable
-from labeling2 import price2
+from labeling2 import cal_min_out_deltav, price2
 from master import MasterModel, MIPResult, add_column, fix_risk, new_master, solve_lp, solve_mip, time_price
 
 
@@ -53,30 +53,41 @@ class DvResult:
 def run_cg(risk: dict[int, float], table: ArcTable, use_skip: bool = True,
            max_iters: int = d.MAX_ITERS, mip_time_limit_s: float = d.MIP_TIME_LIMIT_S,
            verbose: bool = True) -> CGResult:
-    """1단계: 위험지수 합 최대. 빠른 pricing이 빈손이면 정확 모드로 확인한다."""
+    # 1단계, 빠른 모드에서 아무것도 안나오면 정확 모드로
+
+
     if max_iters < 1:
         raise ValueError("max_iters는 1 이상이어야 합니다.")
     if any(not math.isfinite(r) or r < 0 for r in risk.values()):
         raise ValueError("위험지수는 유한한 0 이상의 값이어야 합니다.")
+    
     m = new_master(risk)
-    # 순가치 0, ΔV 가중치 1이면 각 잔해의 최소 ΔV 왕복 트립을 얻는다.
+
+    # 디포 복귀 최소 ΔV R(i, t) 미리 계산하기
+    R = cal_min_out_deltav(table)
+
+    #초기 경로 생성, 그냥 모든 잔해 왕복, 가장 델타 v작은걸로
     zero = {i: 0.0 for i in risk}
     initial = price2(zero, zero, lambda t: 0.0, table, use_skip=False,
-                     n_best=None, min_rp=-math.inf, k_max=1, dv_weight=1.0)
+                     n_best=None, min_rp=-math.inf, k_max=1, dv_weight=1.0, R=R)
     for trip in initial.trips:
         add_column(m, trip)
     if verbose:
         print(f"[초기 열] {len(m.columns)}개 (단독 왕복 불가 {len(risk) - len(m.columns)}개)", flush=True)
 
+    #반복 준비
     logs = []
     exact, certified = not use_skip, False
     total_risk = sum(risk.values())
+
+    #CG 시작
     for it in range(1, max_iters + 1):
         t0 = time.perf_counter()
-        lp_value, alpha, mu = solve_lp(m)
+        lp_value, alpha, mu = solve_lp(m)#LP 계산
         U = time_price(mu)
         t1 = time.perf_counter()
-        # 모든 위험지수를 확보한 정수해는 자명한 상한에 도달했다.
+
+        # 정수 해 상한에 도달하면 미리 1단계 끝내기
         if lp_value >= total_risk - d.TOL:
             if solve_mip(m, mip_time_limit_s).risk_sum >= total_risk - d.TOL:
                 certified = True
@@ -84,8 +95,8 @@ def run_cg(risk: dict[int, float], table: ArcTable, use_skip: bool = True,
                     print(f"[CG {it}] 모든 잔해의 위험지수 합 {total_risk:g} 달성", flush=True)
                 break
 
-        res = price2(risk, alpha, U, table, use_skip=not exact)
-        n_new = sum(add_column(m, trip) for trip in res.trips)
+        res = price2(risk, alpha, U, table, use_skip=not exact, R=R)
+        n_new = sum(add_column(m, trip) for trip in res.trips) #추가된 열 수
         t2 = time.perf_counter()
         logs.append(IterLog(it, lp_value, res.complete, n_new, len(m.columns), len(m.time_rows),
                             t1 - t0, t2 - t1))
@@ -132,6 +143,7 @@ pricing은 v_i = λ r_i - α_i와 ΔV 가중치 1을 사용한다.
         raise ValueError("2단계에는 1단계 마스터가 필요합니다.")
     m = result.master
     fix_risk(m, result.mip.risk_sum)
+    R = cal_min_out_deltav(table)   # 1단계와 같은 R (약 0.3초라 여기서 다시 계산)
     logs = []
     exact, certified = not use_skip, False
     for it in range(1, max_iters + 1):
@@ -141,7 +153,7 @@ pricing은 v_i = λ r_i - α_i와 ΔV 가중치 1을 사용한다.
         U = time_price(mu)
         t1 = time.perf_counter()
         res = price2({i: lam * r for i, r in m.risk.items()}, alpha, U, table,
-                     dv_weight=1.0, use_skip=not exact)
+                     dv_weight=1.0, use_skip=not exact, R=R)
         n_new = sum(add_column(m, trip) for trip in res.trips)
         t2 = time.perf_counter()
         logs.append(IterLog(it, lp_value, res.complete, n_new, len(m.columns), len(m.time_rows),
