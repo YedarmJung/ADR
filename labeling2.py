@@ -97,6 +97,89 @@ def cal_min_out_deltav(table: ArcTable):
 
     return R
 
+def usable_arc_ids(table, ids, v, U, k_max, dv_weight, min_rp):
+    """
+    아크 a를 반드시 한 번 타는 디포 왕복 트립에서 rp > min_rp가 아닌 아크는 다 미리 지우기
+    """
+    arc = np.asarray(ids, dtype=np.intp)
+    if arc.size == 0 or min_rp == -math.inf:
+        return arc.tolist()
+
+    src, dst = table.i[arc], table.j[arc]
+    dep = table.t_dep[arc].astype(float, copy=False)
+    arr = table.t_arr[arc].astype(float, copy=False)
+    ready = arr + d.TAU_S
+
+    reward = np.zeros(len(table.node_ids))
+    for node, value in v.items():
+        reward[node] = value
+    cost = dv_weight * table.dv[arc].astype(float, copy=False)
+    gain = reward[dst] - cost
+
+    # 잔해별로 시간상 연결할 수 있는 도착·출발 아크의 경계를 구한다.
+    links = []
+    for node in v:
+        incoming = np.flatnonzero(dst == node)
+        outgoing = np.flatnonzero(src == node)  # 이미 출발 시각순
+        if not incoming.size or not outgoing.size:
+            continue
+
+        incoming = incoming[np.argsort(ready[incoming], kind="stable")]
+        first_out = np.searchsorted(dep[outgoing], ready[incoming], side="left")
+        n_in = np.searchsorted(ready[incoming], dep[outgoing], side="right")
+        links.append((incoming, outgoing, first_out, n_in))
+
+    def best_after(score):
+        """각 도착 아크에서 작업을 마친 뒤 탈 수 있는 출발 아크의 최고 점수."""
+        result = np.full(arc.size, -np.inf)
+        for incoming, outgoing, first_out, _ in links:
+            tail = np.maximum.accumulate(score[outgoing][::-1])[::-1]
+            result[incoming] = np.append(tail, -np.inf)[first_out]
+        return result
+
+    def best_before(score):
+        """각 출발 아크가 떠나기 전에 작업을 마친 도착 아크의 최고 점수."""
+        result = np.full(arc.size, -np.inf)
+        for incoming, outgoing, _, n_in in links:
+            head = np.maximum.accumulate(score[incoming])
+            result[outgoing] = np.r_[-np.inf, head][n_in]
+        return result
+
+    first = src == 0
+    end = arr + d.S0
+    back = (dst == 0) & (end <= d.HORIZON_S)
+    if not first.any() or not back.any():
+        return []
+
+    # 기존 price2와 같은 방식으로 출발·복귀 시각을 반올림한다.
+    start_fee = np.array([U(floor_unit(t)) for t in dep[first]])
+    end_fee = np.array([U(ceil_unit(t)) for t in end[back]])
+
+    prefix = np.full(arc.size, -np.inf)
+    close = np.full(arc.size, -np.inf)
+    prefix[first] = gain[first] + start_fee
+    close[back] = -cost[back] - end_fee
+
+    # suffix[h][a]는 a를 탄 뒤 잔해를 최대 h개 더 방문하고 복귀할 때의 최고 점수.
+    suffix = [best_after(close)]
+    for h in range(1, k_max):
+        suffix.append(best_after(np.maximum(close, gain + suffix[h - 1])))
+
+    # 출발 아크의 상한을 먼저 채우고, 방문 수별로 중간·복귀 아크의 상한을 구한다.
+    upper = prefix + suffix[k_max - 1]
+    for visited in range(1, k_max + 1):
+        before = best_before(prefix)
+        upper = np.maximum(upper, before + close)
+
+        if visited < k_max:
+            prefix = before + gain
+            upper = np.maximum(upper, prefix + suffix[k_max - visited - 1])
+
+    # 점수 합산 순서에 따른 부동소수점 오차로 개선 열을 놓치지 않도록 한다.
+    scale = max(1.0, np.max(np.abs(reward)), cost.max(),
+                np.max(np.abs(start_fee)), np.max(np.abs(end_fee)))
+    slack = max(1e-8, 16 * np.finfo(float).eps * (k_max + 2)**2 * scale)
+    return arc[upper >= min_rp - slack].tolist()
 
 def price2(risk: dict[int, float], alpha: dict[int, float], U: TimePrice, table: ArcTable,
            use_skip: bool = True, n_best: int | None = N_BEST, min_rp: float = TOL, k_max: int | None = None,
@@ -168,7 +251,7 @@ def price2(risk: dict[int, float], alpha: dict[int, float], U: TimePrice, table:
         ub = g + extra_of[S] - U(t) - w * rest
         if ub > b:
             heapq.heappush(arriving, (t, next(order), k, Label(t, g, total_dv, kit, S, ub, a, prev))) #힙에 넣기
-
+    ids = usable_arc_ids(table, ids, v, U, k_max, dv_weight, min_rp)
     # 2. 아크를 출발 시각 순으로 훑는다
     for a in ids:
         # 이 아크가 떠나기 전에 떠날 수 있게 된 라벨을 대기 목록waiting에 넣는다

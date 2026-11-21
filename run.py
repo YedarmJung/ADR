@@ -12,7 +12,7 @@ from pathlib import Path
 import data as d
 
 # ── 여기서 시나리오를 고른다 ─────────────────────────────────────────────
-SCENARIO = "n20"                                    # n10, n15, ..., n50
+SCENARIO = "n30"                                    # n10, n15, ..., n50
 DATA_DIR = Path("adr_scaling_n10-50/data")          # 시나리오 폴더들이 있는 곳
 
 
@@ -68,7 +68,7 @@ def main(argv=None) -> int:
     from cg import minimize_dv, run_cg, save_result
 
     table, risk = d.load_data(args.input)
-    print(f"pricing: labeling2 | 최대 방문: {d.K_MAX}", flush=True)
+    print(f"pricing: labeling2 | 최대 방문: {d.K_MAX} | 작업 시간: {d.TAU_S:g}s", flush=True)
     print("아크 표:", d.table_stats(table), flush=True)
     print("위험지수 합:", sum(risk.values()), flush=True)
 
